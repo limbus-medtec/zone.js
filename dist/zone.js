@@ -340,15 +340,23 @@ var Zone$1 = (function (global) {
             this.callback = callback;
             var self = this;
             this.invoke = function () {
-                _numberOfNestedTaskFrames++;
-                try {
-                    return zone.runTask(self, this, arguments);
-                }
-                finally {
-                    if (_numberOfNestedTaskFrames == 1) {
-                        drainMicroTaskQueue();
+                // this helps reducing performance issues with angular 2
+                // effectively removes scope.$digest calls on mousemoves
+                // investigate if strange behavior occurs w.r.t mousemoves
+                // switch back to zone standard library when we removed angular 1
+                if (!arguments[0]
+                    || ["pointermove", "mousemove", "mouseout"].indexOf(arguments[0].type) < 0
+                    || arguments[0].buttons > 0) {
+                    _numberOfNestedTaskFrames++;
+                    try {
+                        return zone.runTask(self, this, arguments);
                     }
-                    _numberOfNestedTaskFrames--;
+                    finally {
+                        if (_numberOfNestedTaskFrames == 1) {
+                            drainMicroTaskQueue();
+                        }
+                        _numberOfNestedTaskFrames--;
+                    }
                 }
             };
         }
