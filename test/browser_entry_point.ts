@@ -20,4 +20,7 @@ import './browser/requestAnimationFrame.spec';
 import './browser/WebSocket.spec';
 import './browser/XMLHttpRequest.spec';
 import './browser/MediaQuery.spec';
+import './browser/Notification.spec';
 import './mocha-patch.spec';
+import './jasmine-patch.spec';
+import './extra/cordova.spec';

@@ -8,8 +8,12 @@
 
 import '../../lib/zone-spec/task-tracking';
 
+import {supportPatchXHROnProperty} from '../test-util';
+
+declare const global: any;
+
 describe('TaskTrackingZone', function() {
-  let _TaskTrackingZoneSpec: typeof TaskTrackingZoneSpec = Zone['TaskTrackingZoneSpec'];
+  let _TaskTrackingZoneSpec: typeof TaskTrackingZoneSpec = (Zone as any)['TaskTrackingZoneSpec'];
   let taskTrackingZoneSpec: TaskTrackingZoneSpec = null;
   let taskTrackingZone: Zone;
 
@@ -45,7 +49,9 @@ describe('TaskTrackingZone', function() {
             setTimeout(() => {
               expect(taskTrackingZoneSpec.macroTasks.length).toBe(0);
               expect(taskTrackingZoneSpec.microTasks.length).toBe(0);
-              expect(taskTrackingZoneSpec.eventTasks.length).not.toBe(0);
+              if (supportPatchXHROnProperty()) {
+                expect(taskTrackingZoneSpec.eventTasks.length).not.toBe(0);
+              }
               taskTrackingZoneSpec.clearEvents();
               expect(taskTrackingZoneSpec.eventTasks.length).toBe(0);
               done();
@@ -64,12 +70,10 @@ describe('TaskTrackingZone', function() {
 
   it('should capture task creation stacktrace', (done) => {
     taskTrackingZone.run(() => {
-      const task = setTimeout(() => {
+      const task: any = setTimeout(() => {
         done();
       }) as any as Task;
       expect(task['creationLocation']).toBeTruthy();
     });
   });
 });
-
-export let __something__;

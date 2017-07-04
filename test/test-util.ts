@@ -21,15 +21,50 @@
  *
  *  ifEnvSupports(supportsOnClick, function() { ... });
  */
-export function ifEnvSupports(test, block) {
-  return function() {
-    const message = (test.message || test.name || test);
-    if (typeof test === 'string' ? !!global[test] : test()) {
-      block();
+declare const global: any;
+export function ifEnvSupports(test: any, block: Function): () => void {
+  return _ifEnvSupports(test, block);
+}
+
+export function ifEnvSupportsWithDone(test: any, block: Function): (done: Function) => void {
+  return _ifEnvSupports(test, block, true);
+}
+
+function _ifEnvSupports(test: any, block: Function, withDone = false) {
+  if (withDone) {
+    return function(done?: Function) {
+      _runTest(test, block, done);
+    };
+  } else {
+    return function() {
+      _runTest(test, block, undefined);
+    };
+  }
+}
+
+function _runTest(test: any, block: Function, done: Function) {
+  const message = (test.message || test.name || test);
+  if (typeof test === 'string' ? !!global[test] : test()) {
+    if (done) {
+      block(done);
     } else {
-      it('should skip the test if the API does not exist', function() {
-        console.log('WARNING: skipping ' + message + ' tests (missing this API)');
-      });
+      block();
     }
-  };
-};
+  } else {
+    done && done();
+    it('should skip the test if the API does not exist', function() {
+      console.log('WARNING: skipping ' + message + ' tests (missing this API)');
+    });
+  }
+}
+
+export function supportPatchXHROnProperty() {
+  let desc = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'onload');
+  if (!desc && (window as any)['XMLHttpRequestEventTarget']) {
+    desc = Object.getOwnPropertyDescriptor(global['XMLHttpRequestEventTarget'].prototype, 'onload');
+  }
+  if (!desc || !desc.configurable) {
+    return false;
+  }
+  return true;
+}

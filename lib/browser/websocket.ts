@@ -6,7 +6,8 @@
  * found in the LICENSE file at https://angular.io/license
  */
 
-import {patchEventTargetMethods, patchOnProperties} from '../common/utils';
+import {patchEventTargetMethods} from '../common/events';
+import {patchOnProperties} from '../common/utils';
 
 // we have to patch the instance since the proto is non-configurable
 export function apply(_global: any) {
@@ -16,9 +17,9 @@ export function apply(_global: any) {
   if (!(<any>_global).EventTarget) {
     patchEventTargetMethods(WS.prototype);
   }
-  (<any>_global).WebSocket = function(a, b) {
+  (<any>_global).WebSocket = function(a: any, b: any) {
     const socket = arguments.length > 1 ? new WS(a, b) : new WS(a);
-    let proxySocket;
+    let proxySocket: any;
 
     // Safari 7.0 has non-configurable own 'onmessage' and friends properties on the socket instance
     const onmessageDesc = Object.getOwnPropertyDescriptor(socket, 'onmessage');
@@ -39,6 +40,6 @@ export function apply(_global: any) {
     return proxySocket;
   };
   for (const prop in WS) {
-    _global.WebSocket[prop] = WS[prop];
+    _global['WebSocket'][prop] = WS[prop];
   }
 }

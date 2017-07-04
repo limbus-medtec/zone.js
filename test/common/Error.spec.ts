@@ -6,6 +6,9 @@
  * found in the LICENSE file at https://angular.io/license
  */
 
+const _global: any =
+    typeof window === 'object' && window || typeof self === 'object' && self || global;
+
 // simulate @angular/facade/src/error.ts
 class BaseError extends Error {
   /** @internal **/
@@ -78,7 +81,7 @@ class TestMessageError extends WrappedError {
 describe('ZoneAwareError', () => {
   // If the environment does not supports stack rewrites, then these tests will fail
   // and there is no point in running them.
-  if (!Error['stackRewrite']) return;
+  if (!(Error as any)['stackRewrite']) return;
 
   it('should keep error prototype chain correctly', () => {
     class MyError extends Error {}
@@ -132,7 +135,7 @@ describe('ZoneAwareError', () => {
     }
     if (Object.prototype.hasOwnProperty.call(Error.prototype, 'fileName')) {
       // in firefox, error has fileName property
-      expect((<any>myError).fileName).toContain('zone');
+      expect((<any>myError).fileName).toBeTruthy();
     }
   });
 
@@ -157,18 +160,47 @@ describe('ZoneAwareError', () => {
     expect(error1.message).toEqual('test new error message');
   });
 
+  it('should copy customized NativeError properties to ZoneAwareError', () => {
+    const spy = jasmine.createSpy('errorCustomFunction');
+    const NativeError = (global as any)[(Zone as any).__symbol__('Error')];
+    NativeError.customFunction = function(args: any) {
+      spy(args);
+    };
+    expect((Error as any)['customProperty']).toBe('customProperty');
+    expect(typeof(Error as any)['customFunction']).toBe('function');
+    (Error as any)['customFunction']('test');
+    expect(spy).toHaveBeenCalledWith('test');
+  });
+
+  it('should always have stack property even without throw', () => {
+    // in IE, the stack will be undefined without throw
+    // in ZoneAwareError, we will make stack always be
+    // there event without throw
+    const error = new Error('test');
+    const errorWithoutNew = Error('test');
+    expect(error.stack.split('\n').length > 0).toBeTruthy();
+    expect(errorWithoutNew.stack.split('\n').length > 0).toBeTruthy();
+  });
+
   it('should show zone names in stack frames and remove extra frames', () => {
-    const rootZone = getRootZone();
+    const rootZone = Zone.root;
     const innerZone = rootZone.fork({name: 'InnerZone'});
 
     rootZone.run(testFn);
     function testFn() {
       let outside: Error;
       let inside: Error;
+      let outsideWithoutNew: Error;
+      let insideWithoutNew: Error;
       try {
         throw new Error('Outside');
       } catch (e) {
         outside = e;
+      }
+      try {
+        throw Error('Outside');
+      } catch (e) {
+        outsideWithoutNew = e;
       }
       innerZone.run(function insideRun() {
         try {
@@ -176,40 +208,211 @@ describe('ZoneAwareError', () => {
         } catch (e) {
           inside = e;
         }
+        try {
+          throw Error('Inside');
+        } catch (e) {
+          insideWithoutNew = e;
+        }
       });
 
       expect(outside.stack).toEqual(outside.zoneAwareStack);
+      expect(outsideWithoutNew.stack).toEqual(outsideWithoutNew.zoneAwareStack);
       expect(inside.stack).toEqual(inside.zoneAwareStack);
+      expect(insideWithoutNew.stack).toEqual(insideWithoutNew.zoneAwareStack);
       expect(typeof inside.originalStack).toEqual('string');
+      expect(typeof insideWithoutNew.originalStack).toEqual('string');
       const outsideFrames = outside.stack.split(/\n/);
       const insideFrames = inside.stack.split(/\n/);
+      const outsideWithoutNewFrames = outsideWithoutNew.stack.split(/\n/);
+      const insideWithoutNewFrames = insideWithoutNew.stack.split(/\n/);
+
       // throw away first line if it contains the error
       if (/Outside/.test(outsideFrames[0])) {
         outsideFrames.shift();
       }
-      if (/new Error/.test(outsideFrames[0])) {
+      if (/Error /.test(outsideFrames[0])) {
         outsideFrames.shift();
       }
+
+      if (/Outside/.test(outsideWithoutNewFrames[0])) {
+        outsideWithoutNewFrames.shift();
+      }
+      if (/Error /.test(outsideWithoutNewFrames[0])) {
+        outsideWithoutNewFrames.shift();
+      }
+
       if (/Inside/.test(insideFrames[0])) {
         insideFrames.shift();
       }
-      if (/new Error/.test(insideFrames[0])) {
+      if (/Error /.test(insideFrames[0])) {
         insideFrames.shift();
+      }
+
+      if (/Inside/.test(insideWithoutNewFrames[0])) {
+        insideWithoutNewFrames.shift();
+      }
+      if (/Error /.test(insideWithoutNewFrames[0])) {
+        insideWithoutNewFrames.shift();
       }
 
       expect(outsideFrames[0]).toMatch(/testFn.*[<root>]/);
 
       expect(insideFrames[0]).toMatch(/insideRun.*[InnerZone]]/);
-      expect(insideFrames[1]).toMatch(/run.*[<root> => InnerZone]]/);
-      expect(insideFrames[2]).toMatch(/testFn.*[<root>]]/);
+      expect(insideFrames[1]).toMatch(/testFn.*[<root>]]/);
+
+      expect(outsideWithoutNewFrames[0]).toMatch(/testFn.*[<root>]/);
+
+      expect(insideWithoutNewFrames[0]).toMatch(/insideRun.*[InnerZone]]/);
+      expect(insideWithoutNewFrames[1]).toMatch(/testFn.*[<root>]]/);
     }
   });
-});
 
-function getRootZone() {
-  let zone = Zone.current;
-  while (zone.parent) {
-    zone = zone.parent;
-  }
-  return zone;
-}
+  const zoneAwareFrames = [
+    'Zone.run', 'Zone.runGuarded', 'Zone.scheduleEventTask', 'Zone.scheduleMicroTask',
+    'Zone.scheduleMacroTask', 'Zone.runTask', 'ZoneDelegate.scheduleTask',
+    'ZoneDelegate.invokeTask', 'zoneAwareAddListener'
+  ];
+
+  function assertStackDoesNotContainZoneFrames(err: Error) {
+    const frames = err.stack.split('\n');
+    for (let i = 0; i < frames.length; i++) {
+      expect(zoneAwareFrames.filter(f => frames[i].indexOf(f) !== -1)).toEqual([]);
+    }
+  };
+
+  const errorZoneSpec = {
+    name: 'errorZone',
+    done: <() => void>null,
+    onHandleError:
+        (parentDelegate: ZoneDelegate, currentZone: Zone, targetZone: Zone, error: Error) => {
+          assertStackDoesNotContainZoneFrames(error);
+          setTimeout(() => {
+            errorZoneSpec.done && errorZoneSpec.done();
+          }, 0);
+          return false;
+        }
+  };
+
+  const errorZone = Zone.root.fork(errorZoneSpec);
+
+  const assertStackDoesNotContainZoneFramesTest = function(testFn: Function) {
+    return function(done: () => void) {
+      errorZoneSpec.done = done;
+      errorZone.run(testFn);
+    };
+  };
+
+  describe('Error stack', () => {
+    it('Error with new which occurs in setTimeout callback should not have zone frames visible',
+       assertStackDoesNotContainZoneFramesTest(() => {
+         setTimeout(() => {
+           throw new Error('timeout test error');
+         }, 10);
+       }));
+
+    it('Error without new which occurs in setTimeout callback should not have zone frames visible',
+       assertStackDoesNotContainZoneFramesTest(() => {
+         setTimeout(() => {
+           throw Error('test error');
+         }, 10);
+       }));
+
+    it('Error with new which cause by promise rejection should not have zone frames visible',
+       (done) => {
+         const p = new Promise((resolve, reject) => {
+           reject(new Error('test error'));
+         });
+         p.catch(err => {
+           assertStackDoesNotContainZoneFrames(err);
+           done();
+         });
+       });
+
+    it('Error without new which cause by promise rejection should not have zone frames visible',
+       (done) => {
+         const p = new Promise((resolve, reject) => {
+           reject(Error('test error'));
+         });
+         p.catch(err => {
+           assertStackDoesNotContainZoneFrames(err);
+           done();
+         });
+       });
+
+    it('Error with new which occurs in eventTask callback should not have zone frames visible',
+       assertStackDoesNotContainZoneFramesTest(() => {
+         const task = Zone.current.scheduleEventTask('errorEvent', () => {
+           throw new Error('test error');
+         }, null, () => null, null);
+         task.invoke();
+       }));
+
+    it('Error without new which occurs in eventTask callback should not have zone frames visible',
+       assertStackDoesNotContainZoneFramesTest(() => {
+         const task = Zone.current.scheduleEventTask('errorEvent', () => {
+           throw Error('test error');
+         }, null, () => null, null);
+         task.invoke();
+       }));
+
+    it('Error with new which occurs in longStackTraceZone should not have zone frames and longStackTraceZone frames visible',
+       assertStackDoesNotContainZoneFramesTest(() => {
+         const task = Zone.current.fork((Zone as any)['longStackTraceZoneSpec'])
+                          .scheduleEventTask('errorEvent', () => {
+                            throw new Error('test error');
+                          }, null, () => null, null);
+         task.invoke();
+       }));
+
+    it('Error without new which occurs in longStackTraceZone should not have zone frames and longStackTraceZone frames visible',
+       assertStackDoesNotContainZoneFramesTest(() => {
+         const task = Zone.current.fork((Zone as any)['longStackTraceZoneSpec'])
+                          .scheduleEventTask('errorEvent', () => {
+                            throw Error('test error');
+                          }, null, () => null, null);
+         task.invoke();
+       }));
+
+    it('stack frames of the callback in user customized zoneSpec should be kept',
+       assertStackDoesNotContainZoneFramesTest(() => {
+         const task = Zone.current.fork((Zone as any)['longStackTraceZoneSpec'])
+                          .fork({
+                            name: 'customZone',
+                            onScheduleTask: (parentDelegate, currentZone, targetZone, task) => {
+                              return parentDelegate.scheduleTask(targetZone, task);
+                            },
+                            onHandleError: (parentDelegate, currentZone, targetZone, error) => {
+                              parentDelegate.handleError(targetZone, error);
+                              const containsCustomZoneSpecStackTrace =
+                                  error.stack.indexOf('onScheduleTask') !== -1;
+                              expect(containsCustomZoneSpecStackTrace).toBeTruthy();
+                              return false;
+                            }
+                          })
+                          .scheduleEventTask('errorEvent', () => {
+                            throw new Error('test error');
+                          }, null, () => null, null);
+         task.invoke();
+       }));
+
+    it('should be able to generate zone free stack even NativeError stack is readonly', function() {
+      const _global: any =
+          typeof window === 'object' && window || typeof self === 'object' && self || global;
+      const NativeError = _global['__zone_symbol__Error'];
+      const desc = Object.getOwnPropertyDescriptor(NativeError.prototype, 'stack');
+      if (desc) {
+        const originalSet: (value: any) => void = desc.set;
+        // make stack readonly
+        desc.set = null;
+
+        try {
+          const error = new Error('test error');
+          expect(error.stack).toBeTruthy();
+          assertStackDoesNotContainZoneFrames(error);
+        } finally {
+          desc.set = originalSet;
+        }
+      }
+    });
+  });
+});
